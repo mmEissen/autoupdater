@@ -9,29 +9,22 @@ class BaseException(Exception):
     pass
 
 
-class VenvNotFound(BaseException):
-    pass
-
-
-class VenvBroken(BaseException):
-    pass
-
-
-def run(install_string: str, module: str, base_directory: pathlib.Path) -> None:
-    try:
-        venv = get_venv(base_directory)
-    except VenvNotFound:
-        venv = create_venv(base_directory)
-    except VenvBroken:
-        venv = recreate_venv(base_directory)
+def run(*, requirements_file: str, module: str, base_directory: pathlib.Path) -> None:
+    get_venv()
+    if requirements_file.startswith("https://") or requirements_file.startswith(
+        "http://"
+    ):
+        requirements_path = download_requirements(requirements_file)
+    else:
+        requirements_path = pathlib.Path(requirements_file)
 
 
 def get_venv(base_directory: pathlib.Path) -> pathlib.Path:
     venv_path = _venv_path(base_directory)
     if not path.isdir(venv_path):
-        raise VenvNotFound()
+        return create_venv(base_directory)
     if not path.isdir(_pip_bin(venv_path)):
-        raise VenvBroken()
+        return recreate_venv(base_directory)
     return venv_path
 
 
@@ -57,5 +50,12 @@ def _pip_bin(venv: pathlib.Path) -> pathlib.Path:
     return venv / "bin" / "pip"
 
 
-def install_package(install_string: str, venv: pathlib.Path) -> None:
-    subprocess.run([_pip_bin(venv).absolute(), "install", install_string])
+def install_package(requirements_path: pathlib.Path, venv: pathlib.Path) -> None:
+    subprocess.run(
+        [_pip_bin(venv).absolute(), "install", "-r", requirements_path.absolute()],
+        cwd=path.dirname(requirements_path.absolute()),
+    )
+
+
+def download_requirements(requirements_url: str) -> pathlib.Path:
+    pass

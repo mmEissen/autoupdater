@@ -4,10 +4,14 @@ from autoupdater import core
 
 
 @click.command
-@click.argument("install_string", type=str)
+@click.argument("requirements_file", type=str)
 @click.argument("module", type=str)
-def main(install_string: str, module: str) -> None:
-    core.run(install_string, pathlib.Path("."))
+def main(requirements_file: str, module: str) -> None:
+    core.run(
+        requirements_file=requirements_file,
+        module=module,
+        base_directory=pathlib.Path("."),
+    )
 
 
 main()
