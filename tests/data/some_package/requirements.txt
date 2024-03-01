@@ -1,1 +1,1 @@
-dist/some_package-0.1.0-py3-none-any.whl
+tests/data/some_package/dist/some_package-0.1.0-py3-none-any.whl

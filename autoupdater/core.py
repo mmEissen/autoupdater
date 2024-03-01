@@ -11,12 +11,7 @@ class BaseException(Exception):
 
 def run(*, requirements_file: str, module: str, base_directory: pathlib.Path) -> None:
     get_venv()
-    if requirements_file.startswith("https://") or requirements_file.startswith(
-        "http://"
-    ):
-        requirements_path = download_requirements(requirements_file)
-    else:
-        requirements_path = pathlib.Path(requirements_file)
+    requirements_path = pathlib.Path(requirements_file)
 
 
 def get_venv(base_directory: pathlib.Path) -> pathlib.Path:
@@ -50,12 +45,7 @@ def _pip_bin(venv: pathlib.Path) -> pathlib.Path:
     return venv / "bin" / "pip"
 
 
-def install_package(requirements_path: pathlib.Path, venv: pathlib.Path) -> None:
+def install_package(requirements_file: str, venv: pathlib.Path) -> None:
     subprocess.run(
-        [_pip_bin(venv).absolute(), "install", "-r", requirements_path.absolute()],
-        cwd=path.dirname(requirements_path.absolute()),
+        [_pip_bin(venv).absolute(), "install", "-r", requirements_file],
     )
-
-
-def download_requirements(requirements_url: str) -> pathlib.Path:
-    pass
