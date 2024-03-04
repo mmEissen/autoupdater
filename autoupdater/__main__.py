@@ -8,16 +8,12 @@ import logging
 @click.argument(
     "requirements_file",
     type=str,
-    help="Path to a requirements file. May be a local file path or a web url. All files starting with http:// or https:// will be treated as web urls",
 )
-@click.argument(
-    "module", type=str, help="The module to execute after installing the requirements."
-)
+@click.argument("module", type=str)
 @click.argument(
     "args",
     nargs=-1,
     type=str,
-    help="Any additional arguments will be passed to the process",
 )
 @click.option(
     "--interval",
