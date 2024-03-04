@@ -13,6 +13,7 @@ requests = "^2.31.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.0.2"
+freezegun = "^1.4.0"
 
 [build-system]
 requires = ["poetry-core"]
