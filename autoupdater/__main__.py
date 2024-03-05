@@ -32,7 +32,7 @@ import logging
 def main(
     requirements_file: str,
     module: str,
-    args: list[str],
+    args: tuple[str, ...],
     interval: int,
     sigterm_timeout: int,
 ) -> None:
@@ -40,7 +40,7 @@ def main(
     core.run(
         requirements_file=requirements_file,
         module=module,
-        args=args,
+        args=list(args),
         base_directory=pathlib.Path("."),
         duration_between_updates=interval,
         termination_timeout=sigterm_timeout,

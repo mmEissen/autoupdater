@@ -7,6 +7,7 @@ from typing import Iterator
 import venv as venv_module
 import subprocess
 import logging
+import tempfile
 
 import requests
 import time
@@ -117,6 +118,7 @@ def run_program_until_dead_or_updated(
                     ensure_digest_installed(venv, new_digest)
                     return
             time.sleep(1)
+        log.info("Process completed, restarting")
 
 
 @contextlib.contextmanager
@@ -125,6 +127,7 @@ def launch(
     module: str,
     args: list[str],
 ) -> Iterator[Program]:
+    log.info("Starting process")
     process = subprocess.Popen(
         [
             venv.spec.python_path().absolute(),
@@ -147,7 +150,7 @@ def ensure_venv(venv_spec: VenvSpec) -> Venv:
     if not path.isdir(venv_spec.venv_dir()):
         log.info("Creating new venv in %s", venv_spec.venv_dir())
         return _create_venv(venv_spec)
-    if not path.isdir(venv_spec.pip_path()):
+    if not path.isfile(venv_spec.pip_path()):
         log.info(
             "Found a venv in %s, but it is missing pip. Recreating",
             venv_spec.venv_dir(),
@@ -183,7 +186,29 @@ def maybe_new_requirements_digest(venv: Venv) -> bytes | None:
 def ensure_digest_installed(venv: Venv, target_digest: bytes) -> None:
     if target_digest == venv.state.installed_digest:
         return venv
-    log.info("Installing requirements...")
+    log.info("Uninstalling old requirements...")
+    pip_freeze = subprocess.run(
+        [venv.spec.pip_path().absolute(), "freeze"],
+        check=True,
+        capture_output=True,
+    )
+    if pip_freeze.stdout:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            requirements_file = path.join(tmp_dir, "requirements.txt")
+            with open(requirements_file, "wb") as f:
+                f.write(pip_freeze.stdout)
+            subprocess.run(
+                [
+                    venv.spec.pip_path().absolute(),
+                    "uninstall",
+                    "-r",
+                    requirements_file,
+                    "-y",
+                ],
+                check=True,
+            )
+
+    log.info("Installing new requirements...")
     subprocess.run(
         [
             venv.spec.pip_path().absolute(),

@@ -140,7 +140,7 @@ class TestRunProgramUntilDeadOrUpdated:
         start = time.time()  # this is a frozen time!
         initial_digest = venv.state.installed_digest
 
-        core.run_program_until_dead_or_updated(venv, module, 0.5, 1)
+        core.run_program_until_dead_or_updated(venv, module, [], 0.5, 1)
 
         assert "Update detected!" in [r.message for r in caplog.records]
         # This is essentially counting the calls to time.sleep because of the frozen time
