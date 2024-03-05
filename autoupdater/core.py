@@ -21,6 +21,9 @@ class BaseException(Exception):
     pass
 
 
+_MIN_TIME_BETWEEN_ATTEMPTS = 10
+
+
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class VenvSpec:
     requirements_file: str
@@ -40,6 +43,7 @@ class VenvSpec:
 class VenvState:
     installed_digest: bytes = b""
     last_updated_timestamp: float = 0
+    when_last_update_attempt: float = 0
 
 
 @dataclasses.dataclass(kw_only=True)
@@ -84,11 +88,16 @@ def run(
 
     while True:
         try:
-            run_program_until_dead_or_updated(
+            new_digest = run_program_until_dead_or_updated(
                 venv, module, args, duration_between_updates, termination_timeout
             )
         except Exception:
             log.exception("Unexpected error! Program will be restart shortly...")
+            new_digest = maybe_new_requirements_digest(venv)
+            ensure_digest_installed(venv, new_digest)
+        else:
+            if new_digest is not None:
+                ensure_digest_installed(venv, new_digest)
 
 
 def init_venv(requirements_file: str, base_directory: pathlib.Path):
@@ -107,7 +116,7 @@ def run_program_until_dead_or_updated(
     args: list[str],
     duration_between_updates: float,
     termination_timeout: float,
-) -> None:
+) -> bytes | None:
     with launch(venv, module, args) as program:
         while program.is_running():
             if time.time() - program.when_last_update_check > duration_between_updates:
@@ -115,8 +124,7 @@ def run_program_until_dead_or_updated(
                 if (new_digest := maybe_new_requirements_digest(venv)) is not None:
                     log.info("Update detected!")
                     program.stop(termination_timeout)
-                    ensure_digest_installed(venv, new_digest)
-                    return
+                    return new_digest
             time.sleep(1)
         log.info("Process completed, restarting")
 
@@ -207,6 +215,11 @@ def ensure_digest_installed(venv: Venv, target_digest: bytes) -> None:
                 ],
                 check=True,
             )
+
+    time_since_last_attempt = time.time() - venv.state.when_last_update_attempt
+    if time_since_last_attempt < _MIN_TIME_BETWEEN_ATTEMPTS:
+        time.sleep(_MIN_TIME_BETWEEN_ATTEMPTS - time_since_last_attempt)
+    venv.state.when_last_update_attempt = time.time()
 
     log.info("Installing new requirements...")
     subprocess.run(
