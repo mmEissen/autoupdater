@@ -3,7 +3,7 @@ import hashlib
 from os import path
 import os
 import pathlib
-from typing import Callable, Iterator, ParamSpec, TypeVar
+from typing import Callable, Iterator, TypeVar
 import venv as venv_module
 import subprocess
 import logging
@@ -83,6 +83,7 @@ def retry_forever(fn: Callable[[], R], delay: int = _MIN_TIME_BETWEEN_ATTEMPTS) 
         try:
             return fn()
         except Exception:
+            log.exception(f"Unexpected error. Retrying in {delay} seconds")
             time.sleep(delay)
 
 
