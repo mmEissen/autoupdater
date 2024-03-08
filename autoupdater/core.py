@@ -3,7 +3,7 @@ import hashlib
 from os import path
 import os
 import pathlib
-from typing import Iterator
+from typing import Callable, Iterator, ParamSpec, TypeVar
 import venv as venv_module
 import subprocess
 import logging
@@ -75,6 +75,17 @@ class Program:
             log.info("Program terminated successfully!")
 
 
+R = TypeVar("R")
+
+
+def retry_forever(fn: Callable[[], R], delay: int = _MIN_TIME_BETWEEN_ATTEMPTS) -> R:
+    while True:
+        try:
+            return fn()
+        except Exception:
+            time.sleep(delay)
+
+
 def run(
     *,
     requirements_file: str,
@@ -84,9 +95,9 @@ def run(
     duration_between_updates: float,
     termination_timeout: float = 30,
 ) -> None:
-    venv = init_venv(requirements_file, base_directory)
+    venv = retry_forever(lambda: init_venv(requirements_file, base_directory))
 
-    while True:
+    def loop() -> None:
         try:
             new_digest = run_program_until_dead_or_updated(
                 venv, module, args, duration_between_updates, termination_timeout
@@ -98,6 +109,8 @@ def run(
         else:
             if new_digest is not None:
                 ensure_digest_installed(venv, new_digest)
+
+    retry_forever(loop)
 
 
 def init_venv(requirements_file: str, base_directory: pathlib.Path):
