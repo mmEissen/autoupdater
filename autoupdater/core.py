@@ -8,6 +8,7 @@ import venv as venv_module
 import subprocess
 import logging
 import tempfile
+import re
 
 import requests
 import time
@@ -98,20 +99,18 @@ def run(
 ) -> None:
     venv = retry_forever(lambda: init_venv(requirements_file, base_directory))
 
-    def loop() -> None:
+    while True:
         try:
             new_digest = run_program_until_dead_or_updated(
                 venv, module, args, duration_between_updates, termination_timeout
             )
         except Exception:
             log.exception("Unexpected error! Program will be restart shortly...")
-            new_digest = maybe_new_requirements_digest(venv)
-            ensure_digest_installed(venv, new_digest)
+            new_digest = retry_forever(lambda: maybe_new_requirements_digest(venv))
+            retry_forever(lambda: ensure_digest_installed(venv, new_digest))
         else:
             if new_digest is not None:
-                ensure_digest_installed(venv, new_digest)
-
-    retry_forever(loop)
+                retry_forever(lambda: ensure_digest_installed(venv, new_digest))
 
 
 def init_venv(requirements_file: str, base_directory: pathlib.Path):
@@ -149,15 +148,14 @@ def launch(
     module: str,
     args: list[str],
 ) -> Iterator[Program]:
-    log.info("Starting process")
-    process = subprocess.Popen(
-        [
-            venv.spec.python_path().absolute(),
-            "-m",
-            module,
-        ]
-        + args
-    )
+    command = [
+        venv.spec.python_path().absolute(),
+        "-u",
+        "-m",
+        module,
+    ] + args
+    log.info("Starting process '%s'", " ".join(str(arg) for arg in command))
+    process = subprocess.Popen(command)
     program = Program(
         process=process,
         venv=venv,
@@ -205,20 +203,78 @@ def maybe_new_requirements_digest(venv: Venv) -> bytes | None:
     return None
 
 
+def diff_requirements(
+    pip_freeze_content: str, requirements_content: str
+) -> tuple[list[str], list[str]]:
+    def no_comments(line: str) -> str:
+        return line.split("#", maxsplit=1)[0].strip()
+
+    def normalized(line: str) -> str:
+        clean = no_comments(line).split(";", maxsplit=1)[0].strip()
+        if "==" not in clean:
+            return clean
+        name, version = clean.split("==")
+        normalized_name = re.sub(r"[-_.]+", "-", name).lower()
+        return f"{normalized_name}=={version}"
+
+    target_requirements = [
+        (normalized(line), no_comments(line))
+        for line in requirements_content.split("\n")
+        if normalized(line)
+    ]
+    clean_target_requirements = [r[0] for r in target_requirements]
+    installed_requirements = [
+        normalized(line) for line in pip_freeze_content.split("\n") if normalized(line)
+    ]
+    requirements_to_remove = [
+        line for line in installed_requirements if line not in clean_target_requirements
+    ]
+
+    requirements_to_install = [
+        line
+        for clean_requirement, line in target_requirements
+        if clean_requirement not in installed_requirements
+    ]
+    return requirements_to_remove, requirements_to_install
+
+
 def ensure_digest_installed(venv: Venv, target_digest: bytes) -> None:
     if target_digest == venv.state.installed_digest:
         return venv
-    log.info("Uninstalling old requirements...")
+
+    time_since_last_attempt = time.time() - venv.state.when_last_update_attempt
+    if time_since_last_attempt < _MIN_TIME_BETWEEN_ATTEMPTS:
+        time.sleep(_MIN_TIME_BETWEEN_ATTEMPTS - time_since_last_attempt)
+    venv.state.when_last_update_attempt = time.time()
+
+    log.info("Calculating requirements...")
+
+    with open(venv.spec.requirements_file, "r") as f:
+        requirements_content = f.read()
+
     pip_freeze = subprocess.run(
         [venv.spec.pip_path().absolute(), "freeze"],
         check=True,
         capture_output=True,
+        text=True,
     )
-    if pip_freeze.stdout:
+
+    requirements_to_remove, requirements_to_install = diff_requirements(
+        pip_freeze.stdout, requirements_content
+    )
+
+    log.info(
+        "Remove:\n%s\n\nInstall:\n%s",
+        "\n".join(requirements_to_remove),
+        "\n".join(requirements_to_install),
+    )
+
+    if requirements_to_remove:
+        # for some items the syntax is a bit different in requirements files so better to do it this way
         with tempfile.TemporaryDirectory() as tmp_dir:
             requirements_file = path.join(tmp_dir, "requirements.txt")
-            with open(requirements_file, "wb") as f:
-                f.write(pip_freeze.stdout)
+            with open(requirements_file, "w") as f:
+                f.write("\n".join(requirements_to_remove))
             subprocess.run(
                 [
                     venv.spec.pip_path().absolute(),
@@ -230,23 +286,24 @@ def ensure_digest_installed(venv: Venv, target_digest: bytes) -> None:
                 check=True,
             )
 
-    time_since_last_attempt = time.time() - venv.state.when_last_update_attempt
-    if time_since_last_attempt < _MIN_TIME_BETWEEN_ATTEMPTS:
-        time.sleep(_MIN_TIME_BETWEEN_ATTEMPTS - time_since_last_attempt)
-    venv.state.when_last_update_attempt = time.time()
-
     log.info("Installing new requirements...")
-    subprocess.run(
-        [
-            venv.spec.pip_path().absolute(),
-            "install",
-            "-r",
-            venv.spec.requirements_file,
-        ],
-        check=True,
-    )
-    # Technically the requirements_to_install might be out of date at this point.
-    # However this will at worst result in another automatic no-op update later.
+    if requirements_to_install:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            requirements_file = path.join(tmp_dir, "requirements.txt")
+            with open(requirements_file, "w") as f:
+                f.write("\n".join(requirements_to_install))
+            subprocess.run(
+                [
+                    venv.spec.pip_path().absolute(),
+                    "install",
+                    "-r",
+                    requirements_file,
+                ],
+                check=True,
+            )
+
+    # Technically we might have just installed something else than this digest
+    # In that case the update will be triggered again, but will be mostly noop
     venv.state.installed_digest = target_digest
     venv.state.last_updated_timestamp = time.time()
 

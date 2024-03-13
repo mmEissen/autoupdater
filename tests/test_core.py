@@ -147,3 +147,64 @@ class TestRunProgramUntilDeadOrUpdated:
         # The whole test is a little sketchy but seems to do the trick
         assert time.time() - start <= 2
         assert initial_digest != new_digest
+
+
+class TestDiffRequirements:
+    def test_no_new_requirements(self) -> None:
+        requirements_content = (
+            'unicorn==1.0.0 ; python_version >= "3.11" # some comment\n'
+            'sparkle==1.0.0 ; python_version >= "3.11"\n'
+            "pink==1.0.0 # some comment\n"
+            "love-hearts==1.0.0\n"
+        )
+        pip_freeze_content = (
+            "unicorn==1.0.0\n" "sparkle==1.0.0\n" "pink==1.0.0\n" "Love.Hearts==1.0.0\n"
+        )
+
+        remove, install = core.diff_requirements(
+            pip_freeze_content, requirements_content
+        )
+
+        assert remove == []
+        assert install == []
+
+    def test_remove_bad_vibes(self) -> None:
+        requirements_content = (
+            'unicorn==1.0.0 ; python_version >= "3.11" # some comment\n'
+            'sparkle==1.0.0 ; python_version >= "3.11"\n'
+            "pink==1.0.0 # some comment\n"
+            "hearts==1.0.0\n"
+        )
+        pip_freeze_content = (
+            "unicorn==1.0.0\n"
+            "sparkle==1.0.0\n"
+            "pink==1.0.0\n"
+            "hearts==1.0.0\n"
+            "bad-vibes==1.0.0\n"
+        )
+
+        remove, install = core.diff_requirements(
+            pip_freeze_content, requirements_content
+        )
+
+        assert remove == ["bad-vibes==1.0.0"]
+        assert install == []
+
+    def test_add_flair(self) -> None:
+        requirements_content = (
+            'flair==1.0.0 ; python_version >= "3.11" # some comment\n'
+            'unicorn==1.0.0 ; python_version >= "3.11" # some comment\n'
+            'sparkle==1.0.0 ; python_version >= "3.11"\n'
+            "pink==1.0.0 # some comment\n"
+            "hearts==1.0.0\n"
+        )
+        pip_freeze_content = (
+            "unicorn==1.0.0\n" "sparkle==1.0.0\n" "pink==1.0.0\n" "hearts==1.0.0\n"
+        )
+
+        remove, install = core.diff_requirements(
+            pip_freeze_content, requirements_content
+        )
+
+        assert remove == []
+        assert install == ['flair==1.0.0 ; python_version >= "3.11"']
