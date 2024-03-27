@@ -3,7 +3,7 @@ import hashlib
 from os import path
 import os
 import pathlib
-from typing import Callable, Iterator, TypeVar
+from typing import Callable, Iterator, Optional, TypeVar
 import venv as venv_module
 import subprocess
 import logging
@@ -25,7 +25,9 @@ class BaseException(Exception):
 _MIN_TIME_BETWEEN_ATTEMPTS = 10
 
 
-@dataclasses.dataclass(frozen=True, kw_only=True)
+@dataclasses.dataclass(
+    frozen=True,
+)
 class VenvSpec:
     requirements_file: str
     base_directory: pathlib.Path
@@ -40,20 +42,20 @@ class VenvSpec:
         return self.venv_dir() / "bin" / "python"
 
 
-@dataclasses.dataclass(kw_only=True)
+@dataclasses.dataclass()
 class VenvState:
     installed_digest: bytes = b""
     last_updated_timestamp: float = 0
     when_last_update_attempt: float = 0
 
 
-@dataclasses.dataclass(kw_only=True)
+@dataclasses.dataclass()
 class Venv:
     spec: VenvSpec
     state: VenvState
 
 
-@dataclasses.dataclass(kw_only=True)
+@dataclasses.dataclass()
 class Program:
     process: subprocess.Popen
     venv: Venv
@@ -129,7 +131,7 @@ def run_program_until_dead_or_updated(
     args: list[str],
     duration_between_updates: float,
     termination_timeout: float,
-) -> bytes | None:
+) -> Optional[bytes]:
     with launch(venv, module, args) as program:
         while program.is_running():
             if time.time() - program.when_last_update_check > duration_between_updates:
@@ -196,7 +198,7 @@ def _recreate_venv(venv_spec: VenvSpec) -> Venv:
     return _create_venv(venv_spec)
 
 
-def maybe_new_requirements_digest(venv: Venv) -> bytes | None:
+def maybe_new_requirements_digest(venv: Venv) -> Optional[bytes]:
     remote_digest = load_requirements_digest(venv.spec.requirements_file)
     if remote_digest != venv.state.installed_digest:
         return remote_digest
@@ -308,7 +310,7 @@ def ensure_digest_installed(venv: Venv, target_digest: bytes) -> None:
     venv.state.last_updated_timestamp = time.time()
 
 
-def load_requirements_digest(requirements_file: str) -> bytes | None:
+def load_requirements_digest(requirements_file: str) -> Optional[bytes]:
     if requirements_file.startswith("https://") or requirements_file.startswith(
         "http://"
     ):
@@ -324,7 +326,7 @@ def load_requirements_digest(requirements_file: str) -> bytes | None:
     return hashlib.sha256(data).digest()
 
 
-def _load_file_from_web(requirements_file: str, retries: int = 10) -> bytes | None:
+def _load_file_from_web(requirements_file: str, retries: int = 10) -> Optional[bytes]:
     for try_ in range(retries):
         response = requests.get(requirements_file)
         if response.status_code == 200:
