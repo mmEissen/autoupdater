@@ -1,5 +1,4 @@
 import contextlib
-import hashlib
 from os import path
 import os
 import pathlib
@@ -8,11 +7,11 @@ import venv as venv_module
 import subprocess
 import logging
 import tempfile
-import re
 
-import requests
 import time
 import dataclasses
+
+from autoupdater import requirements
 
 
 log = logging.getLogger(__name__)
@@ -53,6 +52,18 @@ class VenvState:
 class Venv:
     spec: VenvSpec
     state: VenvState
+
+    def approve_venv(self) -> None:
+        with open(self.spec.venv_dir() / "__confirmed_state__", "wb") as f:
+            f.write(self.state.installed_digest)
+
+    def is_venv_approved_for_digest(self, digest: bytes) -> bool:
+        try:
+            with open(self.spec.venv_dir() / "__confirmed_state__", "rb") as f:
+                confirmed_digest = f.read()
+        except FileNotFoundError:
+            return False
+        return confirmed_digest == digest
 
 
 @dataclasses.dataclass()
@@ -199,50 +210,22 @@ def _recreate_venv(venv_spec: VenvSpec) -> Venv:
 
 
 def maybe_new_requirements_digest(venv: Venv) -> Optional[bytes]:
-    remote_digest = load_requirements_digest(venv.spec.requirements_file)
+    remote_digest = requirements.digest_from_requirements_file(
+        venv.spec.requirements_file
+    )
     if remote_digest != venv.state.installed_digest:
         return remote_digest
     return None
 
 
-def diff_requirements(
-    pip_freeze_content: str, requirements_content: str
-) -> tuple[list[str], list[str]]:
-    def no_comments(line: str) -> str:
-        return line.split("#", maxsplit=1)[0].strip()
-
-    def normalized(line: str) -> str:
-        clean = no_comments(line).split(";", maxsplit=1)[0].strip()
-        if "==" not in clean:
-            return clean
-        name, version = clean.split("==")
-        normalized_name = re.sub(r"[-_.]+", "-", name).lower()
-        return f"{normalized_name}=={version}"
-
-    target_requirements = [
-        (normalized(line), no_comments(line))
-        for line in requirements_content.split("\n")
-        if normalized(line)
-    ]
-    clean_target_requirements = [r[0] for r in target_requirements]
-    installed_requirements = [
-        normalized(line) for line in pip_freeze_content.split("\n") if normalized(line)
-    ]
-    requirements_to_remove = [
-        line for line in installed_requirements if line not in clean_target_requirements
-    ]
-
-    requirements_to_install = [
-        line
-        for clean_requirement, line in target_requirements
-        if clean_requirement not in installed_requirements
-    ]
-    return requirements_to_remove, requirements_to_install
-
-
 def ensure_digest_installed(venv: Venv, target_digest: bytes) -> None:
     if target_digest == venv.state.installed_digest:
-        return venv
+        return
+
+    if venv.is_venv_approved_for_digest(target_digest):
+        venv.state.installed_digest = target_digest
+        venv.state.last_updated_timestamp = time.time()
+        return
 
     time_since_last_attempt = time.time() - venv.state.when_last_update_attempt
     if time_since_last_attempt < _MIN_TIME_BETWEEN_ATTEMPTS:
@@ -261,7 +244,7 @@ def ensure_digest_installed(venv: Venv, target_digest: bytes) -> None:
         text=True,
     )
 
-    requirements_to_remove, requirements_to_install = diff_requirements(
+    requirements_to_remove, requirements_to_install = requirements.diff(
         pip_freeze.stdout, requirements_content
     )
 
@@ -308,35 +291,4 @@ def ensure_digest_installed(venv: Venv, target_digest: bytes) -> None:
     # In that case the update will be triggered again, but will be mostly noop
     venv.state.installed_digest = target_digest
     venv.state.last_updated_timestamp = time.time()
-
-
-def load_requirements_digest(requirements_file: str) -> Optional[bytes]:
-    if requirements_file.startswith("https://") or requirements_file.startswith(
-        "http://"
-    ):
-        data = _load_file_from_web(requirements_file)
-    else:
-        try:
-            with open(requirements_file, "rb") as file_:
-                data = file_.read()
-        except OSError:
-            data = None
-    if data is None:
-        return None
-    return hashlib.sha256(data).digest()
-
-
-def _load_file_from_web(requirements_file: str, retries: int = 10) -> Optional[bytes]:
-    for try_ in range(retries):
-        response = requests.get(requirements_file)
-        if response.status_code == 200:
-            break
-        time.sleep(30)
-    else:
-        log.error(
-            "Could not load the requirements from %s: Status code %s",
-            requirements_file,
-            response.status_code,
-        )
-        return None
-    return response.content
+    venv.approve_venv()

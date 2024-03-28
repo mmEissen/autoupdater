@@ -1,47 +1,12 @@
-import hashlib
 import logging
 from os import path
 import shutil
 import pathlib
 import time
 from typing import Any
-from unittest import mock
 
 import pytest
 from autoupdater import core
-
-
-DATA_DIR = pathlib.Path(path.dirname(__file__)) / "data"
-
-
-@pytest.fixture
-def requirements_file(tmp_path: pathlib.Path) -> str:
-    shutil.copy(
-        DATA_DIR / "some_package" / "requirements.txt", tmp_path / "requirements.txt"
-    )
-    return str(tmp_path / "requirements.txt")
-
-
-@pytest.fixture
-def module() -> str:
-    return "some_package"
-
-
-@pytest.fixture
-def base_directory(tmp_path: pathlib.Path) -> pathlib.Path:
-    return tmp_path
-
-
-@pytest.fixture
-def venv_spec(requirements_file: str, base_directory: pathlib.Path) -> core.VenvSpec:
-    return core.VenvSpec(
-        requirements_file=requirements_file, base_directory=base_directory
-    )
-
-
-@pytest.fixture
-def venv(requirements_file: str, base_directory: pathlib.Path) -> core.VenvSpec:
-    return core.init_venv(requirements_file, base_directory)
 
 
 class TestEnsureVenv:
@@ -53,64 +18,6 @@ class TestEnsureVenv:
         assert path.isfile(venv.spec.python_path())
         assert path.isfile(venv.spec.pip_path())
         assert venv.spec.venv_dir() == base_directory / "venv"
-
-
-class TestLoadRequirementsDigest:
-    def test_with_local_file(self, venv_spec: core.VenvSpec) -> None:
-        digest = core.load_requirements_digest(venv_spec.requirements_file)
-
-        assert (
-            digest
-            == hashlib.sha256(
-                b"tests/data/some_package/dist/some_package-0.1.0-py3-none-any.whl\n"
-            ).digest()
-        )
-
-    @pytest.mark.parametrize(
-        "requirements_file", ["https://www.example.com/requirements.txt"]
-    )
-    def test_with_remote_file(self, venv_spec: core.VenvSpec) -> None:
-        with mock.patch(
-            "requests.get",
-            return_value=mock.Mock(
-                status_code=200, content=b"some-requirement==1.0.0\n"
-            ),
-        ):
-            digest = core.load_requirements_digest(venv_spec.requirements_file)
-
-        assert digest == hashlib.sha256(b"some-requirement==1.0.0\n").digest()
-
-    @pytest.mark.parametrize(
-        "requirements_file", ["https://www.example.com/requirements.txt"]
-    )
-    def test_with_remote_file_error_9_times(self, venv_spec: core.VenvSpec) -> None:
-        with mock.patch(
-            "requests.get",
-            side_effect=[
-                mock.Mock(status_code=500, content=b"some-requirement==1.0.0\n"),
-            ]
-            * 9
-            + [
-                mock.Mock(status_code=200, content=b"some-requirement==1.0.0\n"),
-            ],
-        ):
-            digest = core.load_requirements_digest(venv_spec.requirements_file)
-
-        assert digest == hashlib.sha256(b"some-requirement==1.0.0\n").digest()
-
-    @pytest.mark.parametrize(
-        "requirements_file", ["https://www.example.com/requirements.txt"]
-    )
-    def test_with_remote_file_error(self, venv_spec: core.VenvSpec) -> None:
-        with mock.patch(
-            "requests.get",
-            return_value=mock.Mock(
-                status_code=500, content=b"some-requirement==1.0.0\n"
-            ),
-        ):
-            digest = core.load_requirements_digest(venv_spec.requirements_file)
-
-        assert digest is None
 
 
 class TestInitVenv:
@@ -129,7 +36,7 @@ class TestRunProgramUntilDeadOrUpdated:
     def on_post_sleep(self, requirements_file: str) -> None:
         def _callback(seconds: float) -> None:
             with open(requirements_file, "a") as file_:
-                file_.write("# force new hash")
+                file_.write("# autoupdater-enforce-digest")
 
         return _callback
 
@@ -147,64 +54,3 @@ class TestRunProgramUntilDeadOrUpdated:
         # The whole test is a little sketchy but seems to do the trick
         assert time.time() - start <= 2
         assert initial_digest != new_digest
-
-
-class TestDiffRequirements:
-    def test_no_new_requirements(self) -> None:
-        requirements_content = (
-            'unicorn==1.0.0 ; python_version >= "3.11" # some comment\n'
-            'sparkle==1.0.0 ; python_version >= "3.11"\n'
-            "pink==1.0.0 # some comment\n"
-            "love-hearts==1.0.0\n"
-        )
-        pip_freeze_content = (
-            "unicorn==1.0.0\n" "sparkle==1.0.0\n" "pink==1.0.0\n" "Love.Hearts==1.0.0\n"
-        )
-
-        remove, install = core.diff_requirements(
-            pip_freeze_content, requirements_content
-        )
-
-        assert remove == []
-        assert install == []
-
-    def test_remove_bad_vibes(self) -> None:
-        requirements_content = (
-            'unicorn==1.0.0 ; python_version >= "3.11" # some comment\n'
-            'sparkle==1.0.0 ; python_version >= "3.11"\n'
-            "pink==1.0.0 # some comment\n"
-            "hearts==1.0.0\n"
-        )
-        pip_freeze_content = (
-            "unicorn==1.0.0\n"
-            "sparkle==1.0.0\n"
-            "pink==1.0.0\n"
-            "hearts==1.0.0\n"
-            "bad-vibes==1.0.0\n"
-        )
-
-        remove, install = core.diff_requirements(
-            pip_freeze_content, requirements_content
-        )
-
-        assert remove == ["bad-vibes==1.0.0"]
-        assert install == []
-
-    def test_add_flair(self) -> None:
-        requirements_content = (
-            'flair==1.0.0 ; python_version >= "3.11" # some comment\n'
-            'unicorn==1.0.0 ; python_version >= "3.11" # some comment\n'
-            'sparkle==1.0.0 ; python_version >= "3.11"\n'
-            "pink==1.0.0 # some comment\n"
-            "hearts==1.0.0\n"
-        )
-        pip_freeze_content = (
-            "unicorn==1.0.0\n" "sparkle==1.0.0\n" "pink==1.0.0\n" "hearts==1.0.0\n"
-        )
-
-        remove, install = core.diff_requirements(
-            pip_freeze_content, requirements_content
-        )
-
-        assert remove == []
-        assert install == ['flair==1.0.0 ; python_version >= "3.11"']
