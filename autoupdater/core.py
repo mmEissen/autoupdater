@@ -197,7 +197,9 @@ def ensure_venv(venv_spec: VenvSpec) -> Venv:
 
 
 def _create_venv(venv_spec: VenvSpec) -> Venv:
-    venv_module.create(venv_spec.venv_dir().absolute(), with_pip=True)
+    venv_module.create(
+        venv_spec.venv_dir().absolute(), with_pip=True, upgrade_deps=True
+    )
     return Venv(spec=venv_spec, state=VenvState())
 
 
